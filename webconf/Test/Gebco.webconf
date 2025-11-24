@@ -1,6 +1,6 @@
 RegExp .*/tile/.*
 Size 21600 10800 1 3     
 PageSize 512 512 1 3      
-DataFile /workspaces/OpenSpace-x-ClimateReanalyzer/data/Test/Gebco/earth_png.ppg
-IndexFile /workspaces/OpenSpace-x-ClimateReanalyzer/data/Test/Gebco/earth_png.idx
+DataFile /workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/Test/Gebco/earth_png.ppg
+IndexFile /workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/Test/Gebco/earth_png.idx
 SkippedLevels 0

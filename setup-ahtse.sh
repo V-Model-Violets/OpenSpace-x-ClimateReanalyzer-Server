@@ -339,16 +339,16 @@ sudo chown -R www-data:www-data /var/www/openspace
 
 sudo tee /etc/apache2/sites-available/100-ahtse.conf >/dev/null <<'EOF'
 # Expose your data root at /tiles/
-Alias /tiles/ "/workspaces/OpenSpace-x-ClimateReanalyzer/data/"
+Alias /tiles/ "/workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/"
 
-<Directory "/workspaces/OpenSpace-x-ClimateReanalyzer/data/">
+<Directory "/workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/">
     Options -Indexes -FollowSymLinks
     AllowOverride None
     Require all granted
 </Directory>
 
 # Pull in the blocks your genconf created (MRF_RegExp + MRF_ConfigurationFile)
-Include "/workspaces/OpenSpace-x-ClimateReanalyzer/ahtse.conf"
+Include "/workspaces/OpenSpace-x-ClimateReanalyzer-Server/ahtse.conf"
 EOF
 
 sudo ln -sf /etc/apache2/sites-available/100-ahtse.conf /etc/apache2/sites-enabled/100-ahtse.conf

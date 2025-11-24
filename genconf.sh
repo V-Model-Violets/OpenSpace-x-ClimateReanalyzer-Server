@@ -8,7 +8,7 @@ IFS=$'\n\t'
 
 # --- Config -------------------------------------------------------------------
 # Root data folder where you keep MRF triplets (…/{rel_dir}/{basename}/ files)
-DATA_FOLDER="${DATA_FOLDER:-/workspaces/OpenSpace-x-ClimateReanalyzer/data}"
+DATA_FOLDER="${DATA_FOLDER:-/workspaces/OpenSpace-x-ClimateReanalyzer-Server/data}"
 
 # Resolve script path and webconf root
 SCRIPT="$(realpath "$0" 2>/dev/null || readlink -f "$0")"
