@@ -1,6 +1,6 @@
 name: Validate Commit Message
 on:
-  push: 
+  push:
 
 jobs:
   check-commit-types:
@@ -15,43 +15,42 @@ jobs:
         id: range
         shell: bash
         run: |
-            before="${{ github.event.before }}"
-            after="${{ github.sha }}"
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
 
-            if [[ "$before" =~ ^0+$ ]]; then
+          if [[ "$before" =~ ^0+$ ]]; then
             echo "First push on this ref; checking only new commits on '${GITHUB_REF_NAME}'."
             git fetch --no-tags --prune --progress origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || true
             base="$(git rev-parse --verify "origin/${GITHUB_REF_NAME}" 2>/dev/null || echo "")"
             if [[ -n "$base" ]]; then
-                echo "from=$base" >> "$GITHUB_OUTPUT"
+              echo "from=$base" >> "$GITHUB_OUTPUT"
             else
-                echo "from=${after}^" >> "$GITHUB_OUTPUT"
+              echo "from=${after}^" >> "$GITHUB_OUTPUT"
             fi
             echo "to=$after" >> "$GITHUB_OUTPUT"
             exit 0
-            fi
+          fi
 
-            if ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
+          if ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
             echo "Fetching missing 'before' commit $before …"
             git fetch --no-tags --prune --progress origin "${before}" || true
-            fi
+          fi
 
-            if ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
+          if ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
             echo "Unable to find 'before' locally; using merge-base with remote branch."
             git fetch --no-tags --prune --progress origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || true
             base="$(git merge-base "origin/${GITHUB_REF_NAME}" "${after}" || echo "")"
             if [[ -z "$base" ]]; then
-                echo "from=${after}^" >> "$GITHUB_OUTPUT"
+              echo "from=${after}^" >> "$GITHUB_OUTPUT"
             else
-                echo "from=$base" >> "$GITHUB_OUTPUT"
+              echo "from=$base" >> "$GITHUB_OUTPUT"
             fi
             echo "to=$after" >> "$GITHUB_OUTPUT"
             exit 0
-            fi
+          fi
 
-            echo "from=$before" >> "$GITHUB_OUTPUT"
-            echo "to=$after"   >> "$GITHUB_OUTPUT"
-
+          echo "from=$before" >> "$GITHUB_OUTPUT"
+          echo "to=$after" >> "$GITHUB_OUTPUT"
 
       - name: Validate commit types
         shell: bash
@@ -62,16 +61,24 @@ jobs:
           from='${{ steps.range.outputs.from }}'
           to='${{ steps.range.outputs.to }}'
 
+          COMMITS=$(git rev-list "$from".."$to")
+
+          if [ -z "$COMMITS" ]; then
+            echo "⚠️  No commits found in range $from..$to"
+            echo "This might indicate a configuration issue."
+            exit 1
+          fi
+
           while read -r COMMIT; do
             MSG=$(git log -1 --format=%s "$COMMIT")
             if ! echo "$MSG" | grep -Eq "^(${VALID_TYPES})(\(.+\))?!?: .+"; then
-              echo "Invalid commit message:"
+              echo "❌ Invalid commit message:"
               echo "   $MSG"
               FAILED=1
             else
               echo "✅ $MSG"
             fi
-          done < <(git rev-list "$from".."$to")
+          done <<< "$COMMITS"
 
           if [ $FAILED -ne 0 ]; then
             echo
