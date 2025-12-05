@@ -1,13 +1,22 @@
 {
-	"name": "Ubuntu",
-	"image": "mcr.microsoft.com/devcontainers/base:noble",
-	"features": {
-		"ghcr.io/devcontainers/features/git-lfs:1": {},
-		"ghcr.io/devcontainers-extra/features/apt-packages:1": {
-			"packages": "gdal-bin,libgdal-dev,build-essential,cmake,apache2,apache2-dev,libapr1-dev,libaprutil1-dev,libjpeg-dev,libpng-dev,zlib1g-dev,libcurl4-openssl-dev,sqlite3,libsqlite3-dev,git"
-		}
-	},
-	"postCreateCommand": "bash setup-ahtse.sh && bash genconf.sh",
+  "name": "OpenSpace-AHTSE-Server",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/git-lfs:1": {}
+  },
 
-    "postStartCommand": "sudo service apache2 start"
+  // Run setup + genconf once when the container is created
+  "postCreateCommand": "bash setup-ahtse.sh && bash genconf.sh",
+
+  // Start Apache on container start (no sudo needed if we use root)
+  "postStartCommand": "service apache2 start",
+
+  // Forward port 80 from the container to your host
+  "forwardPorts": [80],
+
+  // Use root inside the container so setup scripts and Apache commands
+  // don't need sudo. (Optional: you can switch to vscode + sudo if you prefer.)
+  "remoteUser": "root"
 }
