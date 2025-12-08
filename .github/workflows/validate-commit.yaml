@@ -19,14 +19,8 @@ jobs:
           after="${{ github.sha }}"
 
           if [[ "$before" =~ ^0+$ ]]; then
-            echo "First push on this ref; checking only new commits on '${GITHUB_REF_NAME}'."
-            git fetch --no-tags --prune --progress origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || true
-            base="$(git rev-parse --verify "origin/${GITHUB_REF_NAME}" 2>/dev/null || echo "")"
-            if [[ -n "$base" ]]; then
-              echo "from=$base" >> "$GITHUB_OUTPUT"
-            else
-              echo "from=${after}^" >> "$GITHUB_OUTPUT"
-            fi
+            echo "First push on this ref; checking only the latest commit."
+            echo "from=${after}^" >> "$GITHUB_OUTPUT"
             echo "to=$after" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -39,7 +33,7 @@ jobs:
           if ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
             echo "Unable to find 'before' locally; using merge-base with remote branch."
             git fetch --no-tags --prune --progress origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || true
-            base="$(git merge-base "origin/${GITHUB_REF_NAME}" "${after}" || echo "")"
+            base="$(git merge-base "origin/${GITHUB_REF_NAME}" "${after}" 2>/dev/null || echo "")"
             if [[ -z "$base" ]]; then
               echo "from=${after}^" >> "$GITHUB_OUTPUT"
             else
@@ -61,16 +55,28 @@ jobs:
           from='${{ steps.range.outputs.from }}'
           to='${{ steps.range.outputs.to }}'
 
-          COMMITS=$(git rev-list "$from".."$to")
+          COMMITS=$(git rev-list "$from".."$to" 2>/dev/null || echo "")
 
           if [ -z "$COMMITS" ]; then
             echo "⚠️  No commits found in range $from..$to"
+            echo "Checking if from and to are the same commit..."
+            if [ "$from" = "$to" ]; then
+              echo "✅ From and to are identical - skipping validation"
+              exit 0
+            fi
             echo "This might indicate a configuration issue."
             exit 1
           fi
 
           while read -r COMMIT; do
             MSG=$(git log -1 --format=%s "$COMMIT")
+            
+            # Skip merge commits (they start with "Merge")
+            if echo "$MSG" | grep -Eq "^Merge (branch|pull request|remote-tracking branch)"; then
+              echo "⏭️  Skipping merge commit: $MSG"
+              continue
+            fi
+            
             if ! echo "$MSG" | grep -Eq "^(${VALID_TYPES})(\(.+\))?!?: .+"; then
               echo "❌ Invalid commit message:"
               echo "   $MSG"
