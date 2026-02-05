@@ -37,17 +37,21 @@ jobs:
         # Configure and start your AHTSE server
         ./setup-ahtse.sh
         ./genconf.sh
-                sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
+        
+        # Fix Apache configuration path for GitHub Actions
+        sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
         
         # Test Apache configuration
         sudo apache2ctl configtest
         
-        # Start Apache
-        sudo systemctl start apache2
-        sudo systemctl status apache2
+        # Restart Apache to ensure it uses the updated configuration
+        sudo systemctl restart apache2
+        sudo systemctl status apache2 --no-pager
         
-        # Wait for server to be ready - test with a basic tile request
-        timeout 60 bash -c 'until curl -f http://localhost:62134/tiles/Tif/Gebco/tile/0/0/0 || curl -f http://localhost:62134/; do sleep 2; done'
+        # Wait for server to be ready - test with actual server port (80)
+        echo "Waiting for Apache to be ready..."
+        timeout 60 bash -c 'until curl -f http://localhost/tiles/Tif/Gebco/tile/0/0/0 2>/dev/null || curl -f http://localhost/ 2>/dev/null; do echo "Waiting for server..."; sleep 2; done'
+        echo "Server is ready!"
         
     - name: Test endpoint discovery (no server required)
       run: |
@@ -56,13 +60,13 @@ jobs:
         
     - name: Test server connectivity
       env:
-        TILE_SERVER_PORT: 62134
+        TILE_SERVER_URL: http://localhost
       run: |
         python3 tests/ping_test.py
         
     - name: Run full test suite
       env:
-        TILE_SERVER_PORT: 62134
+        TILE_SERVER_URL: http://localhost
       run: |
         python3 -m pytest tests/ -v -s
         
