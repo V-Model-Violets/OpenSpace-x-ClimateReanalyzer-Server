@@ -88,9 +88,6 @@ jobs:
 
           echo "TILE_SERVER_URL=http://localhost:80" >> "$GITHUB_ENV"
 
-
-
-
       - name: Test endpoint discovery (no server required)
         run: |
           python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoints_discovered -v
