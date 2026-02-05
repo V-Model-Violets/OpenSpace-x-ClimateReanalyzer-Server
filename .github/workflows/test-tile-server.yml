@@ -40,28 +40,44 @@ jobs:
           ./setup-ahtse.sh
           ./genconf.sh
 
-          echo "Checking for ahtse.conf in workspace..."
-          ls -la ahtse.conf
+          echo "Workspace: $PWD"
+          ls -la ahtse.conf || true
+          ls -la webconf || true
+          ls -la tiles || true
 
-          # Ensure legacy include path exists (prevents Apache config failure)
+          # --- Keep legacy include path alive ---
           sudo mkdir -p /home/runner/wms_modules/mod_sfim
           sudo ln -sf "$PWD/ahtse.conf" /home/runner/wms_modules/mod_sfim/ahtse.conf
+          sudo chmod -R a+rX /home/runner/wms_modules || true
 
-          # Make sure Apache can traverse + read the workspace tiles
-          sudo chmod 755 /home/runner /home/runner/work || true
+          # --- Make repo readable/traversable (for Apache + modules reading configs/data) ---
+          # AHTSE often reads from webconf/ and tiles/ (not just serving static files).
+          sudo chmod 755 /home /home/runner /home/runner/work || true
           sudo chmod 755 /home/runner/work/OpenSpace-x-ClimateReanalyzer-Server || true
           sudo chmod 755 "$PWD" || true
-          sudo chmod -R a+rX "$PWD/tiles" || true
+          sudo chmod -R a+rX "$PWD/webconf" "$PWD/tiles" || true
+          sudo chmod a+r "$PWD/ahtse.conf" || true
 
-          # Patch include path in site config (optional, symlink already prevents failure)
+          # --- Force Apache to run as runner inside GitHub Actions ---
+          # This avoids endless www-data permission edge cases in ephemeral runners.
+          echo "Configuring Apache to run as runner..."
+          sudo sed -i 's/^export APACHE_RUN_USER=.*/export APACHE_RUN_USER=runner/' /etc/apache2/envvars
+          sudo sed -i 's/^export APACHE_RUN_GROUP=.*/export APACHE_RUN_GROUP=runner/' /etc/apache2/envvars
+
+          # --- Patch site config include path if still hardcoded ---
           if [ -f /etc/apache2/sites-enabled/100-ahtse.conf ] && \
              grep -q "/home/runner/wms_modules/mod_sfim/ahtse.conf" /etc/apache2/sites-enabled/100-ahtse.conf; then
             sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
           fi
 
-          # Explicitly allow access to the workspace + tiles (fixes 403)
-          echo "Adding explicit Directory permissions for workspace + tiles..."
-          sudo tee /etc/apache2/conf-available/ahtse-workspace-perms.conf >/dev/null <<EOF
+          # --- Belt-and-suspenders: explicitly allow /tiles at the authz layer ---
+          # If the module is behind <Location> rules, <Directory> won't help.
+          echo "Adding explicit permissions for /tiles..."
+          sudo tee /etc/apache2/conf-available/ahtse-ci-perms.conf >/dev/null <<EOF
+          <Location "/tiles">
+              Require all granted
+          </Location>
+
           <Directory "$PWD">
               Options Indexes FollowSymLinks
               AllowOverride None
@@ -73,8 +89,16 @@ jobs:
               AllowOverride None
               Require all granted
           </Directory>
+
+          <Directory "$PWD/webconf">
+              Options Indexes FollowSymLinks
+              AllowOverride None
+              Require all granted
+          </Directory>
+
+          LogLevel debug
           EOF
-          sudo a2enconf ahtse-workspace-perms
+          sudo a2enconf ahtse-ci-perms
 
           echo "Testing Apache configuration..."
           sudo apache2ctl configtest
@@ -86,23 +110,24 @@ jobs:
           sudo rm -f /run/apache2/apache2.pid /var/run/apache2/apache2.pid || true
           sudo apachectl -k start
 
-          echo "Apache vhosts:"
-          sudo apachectl -S || true
+          echo "Apache is running as:"
+          ps -o user,group,pid,cmd -C apache2 || true
 
-          echo "Modules (sanity):"
-          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || true
+          echo "Listening sockets:"
+          sudo ss -ltnp | grep -E 'apache2|httpd' || true
 
-          # Use explicit URL so tests don't guess random ports
-          TILE_SERVER_URL="http://localhost:80"
-          echo "TILE_SERVER_URL=${TILE_SERVER_URL}" >> "$GITHUB_ENV"
-          echo "Using server URL: ${TILE_SERVER_URL}"
+          echo "Sanity probe root:"
+          curl -sS -I http://localhost:80/ || true
 
-          # Quick 403/404 visibility
-          echo "Probing one tile request:"
-          curl -i "${TILE_SERVER_URL}/tiles/Tif/Gebco/tile/0/0/0" | head -n 30 || true
+          echo "Sanity probe tile (show headers + first lines):"
+          curl -sS -i http://localhost:80/tiles/Tif/Gebco/tile/0/0/0 | head -n 60 || true
 
-          echo "Apache error log (last 200 lines):"
+          echo "Apache error log (last 200):"
           sudo tail -200 /var/log/apache2/error.log || true
+
+          # Set server URL for tests explicitly
+          echo "TILE_SERVER_URL=http://localhost:80" >> "$GITHUB_ENV"
+
 
 
       - name: Test endpoint discovery (no server required)
