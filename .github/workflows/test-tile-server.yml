@@ -37,11 +37,24 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Make a dedicated build home inside the repo workspace to avoid /home/runner permission issues
+          export AHTSE_HOME="$PWD/.ahtse_home"
+          mkdir -p "$AHTSE_HOME"
+          chmod 755 "$AHTSE_HOME"
+
+          # Some scripts rely on HOME for clone/build locations
+          export HOME="$AHTSE_HOME"
+
+          echo "Using HOME=$HOME"
+          echo "Workspace is $PWD"
+          ls -la
+
           # Pre-create expected include path so Apache restarts inside setup-ahtse.sh won't fail
           sudo mkdir -p /home/runner/wms_modules/mod_sfim
           sudo touch /home/runner/wms_modules/mod_sfim/ahtse.conf
           sudo chmod 644 /home/runner/wms_modules/mod_sfim/ahtse.conf
 
+          # Run setup from within the workspace-controlled HOME so git clones succeed
           ./setup-ahtse.sh
           ./genconf.sh
 
@@ -51,16 +64,17 @@ jobs:
           # Point the hardcoded include to the generated ahtse.conf
           sudo ln -sf "$PWD/ahtse.conf" /home/runner/wms_modules/mod_sfim/ahtse.conf
 
-          # Ensure Apache can read/traverse expected paths
+          # Ensure Apache can read/traverse the tiles + webconf in the repo
           sudo chmod 755 /home /home/runner /home/runner/work || true
-          sudo chmod -R a+rX /home/runner/wms_modules/mod_sfim || true
+          sudo chmod 755 "$PWD" || true
           sudo chmod -R a+rX "$PWD/tiles" "$PWD/webconf" || true
 
           # If Apache maps /tiles -> /home/runner/wms_modules/mod_sfim/tiles, make it true:
           sudo mkdir -p /home/runner/wms_modules/mod_sfim/tiles
           sudo ln -sfn "$PWD/tiles" /home/runner/wms_modules/mod_sfim/tiles
+          sudo chmod -R a+rX /home/runner/wms_modules/mod_sfim || true
 
-          # Fix the exact 403 from the log: AH01630 denied by server configuration
+          # Fix the exact 403 from earlier log: AH01630 denied by server configuration
           sudo tee /etc/apache2/conf-available/ahtse-ci-tiles.conf >/dev/null <<'EOF'
           <Directory "/home/runner/wms_modules/mod_sfim/tiles">
               Options Indexes FollowSymLinks
@@ -87,6 +101,7 @@ jobs:
           sudo tail -200 /var/log/apache2/error.log || true
 
           echo "TILE_SERVER_URL=http://localhost:80" >> "$GITHUB_ENV"
+
 
       - name: Test endpoint discovery (no server required)
         run: |
