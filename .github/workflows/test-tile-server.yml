@@ -40,8 +40,19 @@ jobs:
           ls -la ahtse.conf
 
           # Ensure legacy include path exists (prevents Apache config failure)
+          echo "Creating symlink path with proper permissions..."
           sudo mkdir -p /home/runner/wms_modules/mod_sfim
           sudo ln -sf "$PWD/ahtse.conf" /home/runner/wms_modules/mod_sfim/ahtse.conf
+          
+          # Fix permissions for the entire path so Apache can access it
+          echo "Setting permissions for Apache access..."
+          sudo chmod 755 /home/runner
+          sudo chmod 755 /home/runner/wms_modules  
+          sudo chmod 755 /home/runner/wms_modules/mod_sfim
+          sudo chown -R www-data:www-data /home/runner/wms_modules
+          
+          echo "Verifying symlink and permissions..."
+          ls -la /home/runner/wms_modules/mod_sfim/ahtse.conf
 
           # Optional: patch include path in site config
           if [ -f /etc/apache2/sites-enabled/100-ahtse.conf ] && \
