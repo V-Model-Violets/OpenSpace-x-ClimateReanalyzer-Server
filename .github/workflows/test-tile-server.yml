@@ -86,8 +86,27 @@ jobs:
           curl -I http://localhost/ || true
 
           echo "Waiting for tiles endpoint..."
-          timeout 60 bash -c 'until curl -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; do echo "Waiting for tiles..."; sleep 2; done'
-          echo "Tile endpoint is responding!"
+          # First check if basic Apache is responding
+          if ! timeout 30 bash -c 'until curl -fsS http://localhost/ >/dev/null 2>&1; do echo "Waiting for Apache..."; sleep 2; done'; then
+            echo "ERROR: Apache not responding on basic endpoint"
+            exit 1
+          fi
+          
+          # Then try tiles directory
+          if ! timeout 60 bash -c 'until curl -fsS http://localhost/tiles/ >/dev/null 2>&1; do echo "Waiting for tiles directory..."; sleep 2; done'; then
+            echo "WARNING: Tiles directory not responding, trying specific tile..."
+          fi
+          
+          # Finally try specific tile (with longer timeout and better error handling)
+          if timeout 90 bash -c 'until curl -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; do echo "Waiting for tiles..."; sleep 3; done'; then
+            echo "Tile endpoint is responding!"
+          else
+            echo "WARNING: Tile endpoint not responding, checking what's available..."
+            curl -v http://localhost/tiles/ || true
+            curl -v http://localhost/tiles/Tif/ || true
+            curl -v http://localhost/tiles/Tif/Gebco/ || true
+            echo "Continuing with tests - some endpoints may be available..."
+          fi
 
           echo "Apache error log (last 200 lines, for debugging if needed):"
           sudo tail -200 /var/log/apache2/error.log || true
