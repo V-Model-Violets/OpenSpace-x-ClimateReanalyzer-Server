@@ -37,32 +37,40 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Use workspace-local HOME so git clones/build output are writable
+          # Workspace-local HOME for AHTSE-generated paths
           export AHTSE_HOME="$PWD/.ahtse_home"
           mkdir -p "$AHTSE_HOME"
           chmod 755 "$AHTSE_HOME"
           export HOME="$AHTSE_HOME"
 
-          echo "Using HOME=$HOME"
-          echo "Workspace=$PWD"
+          # Fresh build directory so git clones never collide
+          export AHTSE_BUILD="$PWD/.ahtse_build"
+          rm -rf "$AHTSE_BUILD"
+          mkdir -p "$AHTSE_BUILD"
 
-          # Pre-create expected include path under this HOME
+          echo "Workspace=$PWD"
+          echo "HOME=$HOME"
+          echo "BUILD=$AHTSE_BUILD"
+
+          # Pre-create expected include path under HOME (this is where Apache include points now)
           mkdir -p "$HOME/wms_modules/mod_sfim"
-          touch "$HOME/wms_modules/mod_sfim/ahtse.conf"
+          : > "$HOME/wms_modules/mod_sfim/ahtse.conf"
           chmod 644 "$HOME/wms_modules/mod_sfim/ahtse.conf"
 
-          # Build + generate config
-          ./setup-ahtse.sh
-          ./genconf.sh
+          # Run setup from a clean directory so clones like mod_sfim don't conflict
+          pushd "$AHTSE_BUILD"
+          "$GITHUB_WORKSPACE/setup-ahtse.sh"
+          "$GITHUB_WORKSPACE/genconf.sh"
+          popd
 
           echo "Checking for generated ahtse.conf in workspace..."
           ls -la ahtse.conf
 
-          # Point the hardcoded include (now under $HOME) to the generated file
+          # Ensure Apache include resolves
           ln -sf "$PWD/ahtse.conf" "$HOME/wms_modules/mod_sfim/ahtse.conf"
           ls -la "$HOME/wms_modules/mod_sfim/ahtse.conf"
 
-          # Make sure Apache can traverse and read tiles/webconf
+          # Make sure Apache can traverse + read tiles/webconf
           sudo chmod 755 /home /home/runner /home/runner/work || true
           sudo chmod 755 "$PWD" || true
           sudo chmod -R a+rX "$PWD/tiles" "$PWD/webconf" || true
@@ -73,7 +81,7 @@ jobs:
           ln -sfn "$PWD/tiles" "$HOME/wms_modules/mod_sfim/tiles"
           chmod -R a+rX "$HOME/wms_modules/mod_sfim/tiles" || true
 
-          # Fix 403 authz if it occurs on that path
+          # Allow that directory (fixes AH01630-style 403)
           sudo tee /etc/apache2/conf-available/ahtse-ci-tiles.conf >/dev/null <<EOF
           <Directory "$HOME/wms_modules/mod_sfim/tiles">
               Options Indexes FollowSymLinks
@@ -100,6 +108,7 @@ jobs:
           sudo tail -200 /var/log/apache2/error.log || true
 
           echo "TILE_SERVER_URL=http://localhost:80" >> "$GITHUB_ENV"
+
 
 
 
