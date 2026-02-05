@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get install -y apache2 apache2-dev build-essential cmake
 
-            - name: Build and start tile server
+      - name: Build and start tile server
         shell: bash
         run: |
           set -euo pipefail
@@ -68,10 +68,8 @@ jobs:
           sudo ss -ltnp | grep -E 'apache2|httpd' || true
 
           # ---- Detect port ----
-          # Try to extract port from apachectl -S output (e.g. "*:80", "*:8080")
           DETECTED_PORT="$(sudo apachectl -S 2>/dev/null | grep -oE '\*:[0-9]+' | head -n1 | cut -d: -f2 || true)"
 
-          # Fallback: use ss output (grab the first LISTEN port owned by apache2/httpd)
           if [ -z "${DETECTED_PORT}" ]; then
             DETECTED_PORT="$(sudo ss -ltnp 2>/dev/null \
               | awk '/LISTEN/ && ($0 ~ /apache2|httpd/) {print $4}' \
@@ -79,7 +77,6 @@ jobs:
               | awk -F: '{print $NF}' || true)"
           fi
 
-          # Final fallback: assume 80
           if [ -z "${DETECTED_PORT}" ]; then
             DETECTED_PORT="80"
           fi
@@ -101,7 +98,6 @@ jobs:
           echo "Apache error log (last 200 lines):"
           sudo tail -200 /var/log/apache2/error.log || true
 
-
       - name: Test endpoint discovery (no server required)
         run: |
           python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoints_discovered -v
@@ -116,7 +112,6 @@ jobs:
         run: |
           echo "Running full test suite with server URL: $TILE_SERVER_URL"
           python3 -m pytest tests/ -v -s
-
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
