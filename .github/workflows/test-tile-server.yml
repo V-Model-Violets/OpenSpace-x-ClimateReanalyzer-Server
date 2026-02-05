@@ -89,6 +89,27 @@ jobs:
           echo "Apache vhosts:"
           sudo apachectl -S || true
 
+          echo "Checking AHTSE modules loaded:"
+          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || echo "No AHTSE modules found"
+
+          echo "Checking Apache sites enabled:"
+          ls -la /etc/apache2/sites-enabled/
+
+          echo "Checking if AHTSE modules need to be loaded..."
+          if [ -f /home/runner/modules/mod_mrf.so ]; then
+            echo "Loading AHTSE modules..."
+            sudo a2enmod mrf || sudo sh -c 'echo "LoadModule mrf_module /home/runner/modules/mod_mrf.so" >> /etc/apache2/mods-enabled/mrf.load'
+            sudo a2enmod receive || sudo sh -c 'echo "LoadModule receive_module /home/runner/modules/mod_receive.so" >> /etc/apache2/mods-enabled/receive.load'
+            sudo a2enmod convert || sudo sh -c 'echo "LoadModule convert_module /home/runner/modules/mod_convert.so" >> /etc/apache2/mods-enabled/convert.load'
+            sudo a2enmod retile || sudo sh -c 'echo "LoadModule retile_module /home/runner/modules/mod_retile.so" >> /etc/apache2/mods-enabled/retile.load'
+            
+            echo "Reloading Apache with AHTSE modules..."
+            sudo systemctl reload apache2
+          fi
+
+          echo "Final Apache module check:"
+          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || echo "Still no AHTSE modules loaded"
+
           echo "Listening sockets:"
           sudo ss -ltnp | grep -E 'apache2|httpd' || true
 
