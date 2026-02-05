@@ -31,7 +31,7 @@ jobs:
       - name: Install AHTSE dependencies
         run: |
           sudo apt-get install -y apache2 apache2-dev build-essential cmake
-
+      
       - name: Build and start tile server
         shell: bash
         run: |
@@ -44,81 +44,66 @@ jobs:
           ls -la ahtse.conf
 
           # Ensure legacy include path exists (prevents Apache config failure)
-          echo "Creating symlink path with proper permissions..."
           sudo mkdir -p /home/runner/wms_modules/mod_sfim
           sudo ln -sf "$PWD/ahtse.conf" /home/runner/wms_modules/mod_sfim/ahtse.conf
-          
-          # Fix permissions for the entire path so Apache can access it
-          echo "Setting permissions for Apache access..."
-          sudo chmod 755 /home/runner
-          sudo chmod 755 /home/runner/wms_modules  
-          sudo chmod 755 /home/runner/wms_modules/mod_sfim
-          sudo chown -R www-data:www-data /home/runner/wms_modules
-          
-          # Also fix permissions on the GitHub Actions workspace tiles directory
-          echo "Setting permissions for tiles directory..."
-          sudo chmod 755 /home/runner/work
-          sudo chmod 755 /home/runner/work/OpenSpace-x-ClimateReanalyzer-Server
-          sudo chmod 755 /home/runner/work/OpenSpace-x-ClimateReanalyzer-Server/OpenSpace-x-ClimateReanalyzer-Server
-          sudo chmod -R 755 "$PWD/tiles"
-          sudo chown -R www-data:www-data "$PWD/tiles"
-          
-          echo "Verifying symlink and permissions..."
-          ls -la /home/runner/wms_modules/mod_sfim/ahtse.conf
-          echo "Tiles directory permissions:"
-          ls -la "$PWD/tiles/"
 
-          # Optional: patch include path in site config
+          # Make sure Apache can traverse + read the workspace tiles
+          sudo chmod 755 /home/runner /home/runner/work || true
+          sudo chmod 755 /home/runner/work/OpenSpace-x-ClimateReanalyzer-Server || true
+          sudo chmod 755 "$PWD" || true
+          sudo chmod -R a+rX "$PWD/tiles" || true
+
+          # Patch include path in site config (optional, symlink already prevents failure)
           if [ -f /etc/apache2/sites-enabled/100-ahtse.conf ] && \
              grep -q "/home/runner/wms_modules/mod_sfim/ahtse.conf" /etc/apache2/sites-enabled/100-ahtse.conf; then
             sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
           fi
 
+          # Explicitly allow access to the workspace + tiles (fixes 403)
+          echo "Adding explicit Directory permissions for workspace + tiles..."
+          sudo tee /etc/apache2/conf-available/ahtse-workspace-perms.conf >/dev/null <<EOF
+          <Directory "$PWD">
+              Options Indexes FollowSymLinks
+              AllowOverride None
+              Require all granted
+          </Directory>
+
+          <Directory "$PWD/tiles">
+              Options Indexes FollowSymLinks
+              AllowOverride None
+              Require all granted
+          </Directory>
+          EOF
+          sudo a2enconf ahtse-workspace-perms
+
           echo "Testing Apache configuration..."
           sudo apache2ctl configtest
 
-          echo "Stopping any existing Apache..."
+          echo "Restarting Apache cleanly..."
           sudo apachectl -k stop || true
           sudo pkill -9 apache2 || true
           sudo pkill -9 httpd || true
           sudo rm -f /run/apache2/apache2.pid /var/run/apache2/apache2.pid || true
-
-          echo "Starting Apache..."
           sudo apachectl -k start
 
           echo "Apache vhosts:"
           sudo apachectl -S || true
 
-          echo "Checking AHTSE modules loaded:"
-          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || echo "No AHTSE modules found"
+          echo "Modules (sanity):"
+          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || true
 
-          echo "Checking Apache sites enabled:"
-          ls -la /etc/apache2/sites-enabled/
-
-          echo "Checking if AHTSE modules need to be loaded..."
-          if [ -f /home/runner/modules/mod_mrf.so ]; then
-            echo "Loading AHTSE modules..."
-            sudo a2enmod mrf || sudo sh -c 'echo "LoadModule mrf_module /home/runner/modules/mod_mrf.so" >> /etc/apache2/mods-enabled/mrf.load'
-            sudo a2enmod receive || sudo sh -c 'echo "LoadModule receive_module /home/runner/modules/mod_receive.so" >> /etc/apache2/mods-enabled/receive.load'
-            sudo a2enmod convert || sudo sh -c 'echo "LoadModule convert_module /home/runner/modules/mod_convert.so" >> /etc/apache2/mods-enabled/convert.load'
-            sudo a2enmod retile || sudo sh -c 'echo "LoadModule retile_module /home/runner/modules/mod_retile.so" >> /etc/apache2/mods-enabled/retile.load'
-            
-            echo "Reloading Apache with AHTSE modules..."
-            sudo systemctl reload apache2
-          fi
-
-          echo "Final Apache module check:"
-          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || echo "Still no AHTSE modules loaded"
-
-          echo "Listening sockets:"
-          sudo ss -ltnp | grep -E 'apache2|httpd' || true
-
-          # Set server URL for tests
-          TILE_SERVER_URL="http://localhost"
+          # Use explicit URL so tests don't guess random ports
+          TILE_SERVER_URL="http://localhost:80"
           echo "TILE_SERVER_URL=${TILE_SERVER_URL}" >> "$GITHUB_ENV"
           echo "Using server URL: ${TILE_SERVER_URL}"
 
-          echo "Apache setup complete - skipping curl tests, proceeding to test suite"
+          # Quick 403/404 visibility
+          echo "Probing one tile request:"
+          curl -i "${TILE_SERVER_URL}/tiles/Tif/Gebco/tile/0/0/0" | head -n 30 || true
+
+          echo "Apache error log (last 200 lines):"
+          sudo tail -200 /var/log/apache2/error.log || true
+
 
       - name: Test endpoint discovery (no server required)
         run: |
