@@ -35,10 +35,16 @@ jobs:
     - name: Build and start tile server
       run: |
         # Configure and start your AHTSE server
-        # This is an example - adapt to your setup
         ./setup-ahtse.sh
         ./genconf.sh
+                sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
+        
+        # Test Apache configuration
+        sudo apache2ctl configtest
+        
+        # Start Apache
         sudo systemctl start apache2
+        sudo systemctl status apache2
         
         # Wait for server to be ready - test with a basic tile request
         timeout 60 bash -c 'until curl -f http://localhost:62134/tiles/Tif/Gebco/tile/0/0/0 || curl -f http://localhost:62134/; do sleep 2; done'
