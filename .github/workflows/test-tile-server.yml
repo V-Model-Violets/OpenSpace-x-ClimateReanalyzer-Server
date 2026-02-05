@@ -9,94 +9,113 @@ on:
 jobs:
   test-endpoints:
     runs-on: ubuntu-latest
-    
-    # Note: Using local build instead of Docker service
-    # since we build AHTSE from source with setup-ahtse.sh
-    
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-        
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-requests python3-pytest gdal-bin
-        
-    - name: Install AHTSE dependencies (if building locally)
-      run: |
-        sudo apt-get install -y apache2 apache2-dev build-essential cmake
-        # Add other dependencies as needed
-        
-    - name: Build and start tile server
-      run: |
-        # Configure and start your AHTSE server
-        ./setup-ahtse.sh
-        ./genconf.sh
-        
-        # Fix Apache configuration path for GitHub Actions
-        echo "Checking if Apache configuration needs path fixing..."
-        if grep -q "/home/runner/wms_modules/mod_sfim/ahtse.conf" /etc/apache2/sites-enabled/100-ahtse.conf; then
-          echo "Fixing Apache configuration path..."
-          sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
-        else
-          echo "Apache configuration path already correct or not found"
-        fi
-        
-        # Verify the ahtse.conf file exists
-        echo "Checking for ahtse.conf file..."
-        ls -la ahtse.conf 2>/dev/null || echo "ahtse.conf not found in workspace"
-        
-        # Test Apache configuration
-        echo "Testing Apache configuration..."
-        sudo apache2ctl configtest
-        
-        # Stop any existing Apache processes and start fresh
-        echo "Starting Apache service..."
-        sudo systemctl stop apache2 2>/dev/null || true
-        sudo systemctl start apache2
-        
-        # Check Apache status
-        echo "Apache status:"
-        sudo systemctl status apache2 --no-pager -l
-        
-        # Test if Apache is serving content
-        echo "Testing Apache response..."
-        curl -I http://localhost/ 2>/dev/null || echo "Apache not responding on localhost"
-        
-        # Wait for server to be ready - test with actual server port (80)
-        echo "Waiting for Apache to be ready..."
-        timeout 60 bash -c 'until curl -f http://localhost/tiles/Tif/Gebco/tile/0/0/0 2>/dev/null || curl -f http://localhost/ 2>/dev/null; do echo "Waiting for server..."; sleep 2; done'
-        echo "Server is ready!"
-        
-    - name: Test endpoint discovery (no server required)
-      run: |
-        python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoints_discovered -v
-        python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoint_configuration_validity -v
-        
-    - name: Test server connectivity
-      env:
-        TILE_SERVER_URL: http://localhost
-      run: |
-        echo "Testing server connectivity with URL: $TILE_SERVER_URL"
-        python3 tests/ping_test.py
-        
-    - name: Run full test suite
-      env:
-        TILE_SERVER_URL: http://localhost
-      run: |
-        echo "Running full test suite with server URL: $TILE_SERVER_URL"
-        python3 -m pytest tests/ -v -s
-        
-    - name: Upload test results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: test-results
-        path: |
-          tests/tile_server_ping_report_*.json
-          .pytest_cache/
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-requests python3-pytest gdal-bin curl
+
+      - name: Install AHTSE dependencies
+        run: |
+          sudo apt-get install -y apache2 apache2-dev build-essential cmake
+
+      - name: Build and start tile server
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Build/install AHTSE from source and generate config
+          ./setup-ahtse.sh
+          ./genconf.sh
+
+          echo "Checking for ahtse.conf in workspace..."
+          ls -la ahtse.conf
+
+          # -------------------------------------------------------------------
+          # CRITICAL FIX #1:
+          # Apache site config (100-ahtse.conf) references this hardcoded include:
+          #   /home/runner/wms_modules/mod_sfim/ahtse.conf
+          # That include must exist BEFORE Apache parses config, or Apache fails.
+          # Create a compatible path via symlink.
+          # -------------------------------------------------------------------
+          echo "Ensuring legacy include path exists for Apache..."
+          sudo mkdir -p /home/runner/wms_modules/mod_sfim
+          sudo ln -sf "$PWD/ahtse.conf" /home/runner/wms_modules/mod_sfim/ahtse.conf
+          ls -la /home/runner/wms_modules/mod_sfim/ahtse.conf
+
+          # Optional: also patch 100-ahtse.conf to point at workspace ahtse.conf
+          # (good for transparency, but symlink above is what prevents early failure)
+          echo "Patching Apache site config include path (if present)..."
+          if [ -f /etc/apache2/sites-enabled/100-ahtse.conf ] && \
+             grep -q "/home/runner/wms_modules/mod_sfim/ahtse.conf" /etc/apache2/sites-enabled/100-ahtse.conf; then
+            sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
+          fi
+
+          echo "Testing Apache configuration..."
+          sudo apache2ctl configtest
+
+          # -------------------------------------------------------------------
+          # CRITICAL FIX #2:
+          # Don't mix systemctl and apachectl. Use apachectl consistently.
+          # Also clean up stale pid/processes from earlier starts.
+          # -------------------------------------------------------------------
+          echo "Stopping any existing Apache..."
+          sudo apachectl -k stop || true
+          sudo pkill -9 apache2 || true
+          sudo pkill -9 httpd || true
+          sudo rm -f /run/apache2/apache2.pid /var/run/apache2/apache2.pid || true
+
+          echo "Starting Apache..."
+          sudo apachectl -k start
+
+          echo "Apache runtime info..."
+          sudo apachectl -S || true
+          sudo apachectl -M | egrep 'mrf|convert|receive|retile|sfim' || true
+          ps aux | egrep 'apache2|httpd' | grep -v egrep || true
+
+          echo "Testing Apache response..."
+          curl -I http://localhost/ || true
+
+          echo "Waiting for tiles endpoint..."
+          timeout 60 bash -c 'until curl -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; do echo "Waiting for tiles..."; sleep 2; done'
+          echo "Tile endpoint is responding!"
+
+          echo "Apache error log (last 200 lines, for debugging if needed):"
+          sudo tail -200 /var/log/apache2/error.log || true
+
+      - name: Test endpoint discovery (no server required)
+        run: |
+          python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoints_discovered -v
+          python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoint_configuration_validity -v
+
+      - name: Test server connectivity
+        env:
+          TILE_SERVER_URL: http://localhost
+        run: |
+          echo "Testing server connectivity with URL: $TILE_SERVER_URL"
+          python3 tests/ping_test.py
+
+      - name: Run full test suite
+        env:
+          TILE_SERVER_URL: http://localhost
+        run: |
+          echo "Running full test suite with server URL: $TILE_SERVER_URL"
+          python3 -m pytest tests/ -v -s
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            tests/tile_server_ping_report_*.json
+            .pytest_cache/
