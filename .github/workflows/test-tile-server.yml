@@ -55,8 +55,17 @@ jobs:
           sudo chmod 755 /home/runner/wms_modules/mod_sfim
           sudo chown -R www-data:www-data /home/runner/wms_modules
           
+          # Also fix permissions on the workspace tiles directory
+          echo "Setting permissions for tiles directory..."
+          sudo chmod 755 /workspaces
+          sudo chmod 755 /workspaces/OpenSpace-x-ClimateReanalyzer-Server
+          sudo chmod -R 755 /workspaces/OpenSpace-x-ClimateReanalyzer-Server/tiles
+          sudo chown -R www-data:www-data /workspaces/OpenSpace-x-ClimateReanalyzer-Server/tiles
+          
           echo "Verifying symlink and permissions..."
           ls -la /home/runner/wms_modules/mod_sfim/ahtse.conf
+          echo "Tiles directory permissions:"
+          ls -la /workspaces/OpenSpace-x-ClimateReanalyzer-Server/tiles/
 
           # Optional: patch include path in site config
           if [ -f /etc/apache2/sites-enabled/100-ahtse.conf ] && \
