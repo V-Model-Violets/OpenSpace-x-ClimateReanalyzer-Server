@@ -39,14 +39,34 @@ jobs:
         ./genconf.sh
         
         # Fix Apache configuration path for GitHub Actions
-        sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
+        echo "Checking if Apache configuration needs path fixing..."
+        if grep -q "/home/runner/wms_modules/mod_sfim/ahtse.conf" /etc/apache2/sites-enabled/100-ahtse.conf; then
+          echo "Fixing Apache configuration path..."
+          sudo sed -i "s|/home/runner/wms_modules/mod_sfim/ahtse.conf|$PWD/ahtse.conf|g" /etc/apache2/sites-enabled/100-ahtse.conf
+        else
+          echo "Apache configuration path already correct or not found"
+        fi
+        
+        # Verify the ahtse.conf file exists
+        echo "Checking for ahtse.conf file..."
+        ls -la ahtse.conf 2>/dev/null || echo "ahtse.conf not found in workspace"
         
         # Test Apache configuration
+        echo "Testing Apache configuration..."
         sudo apache2ctl configtest
         
-        # Restart Apache to ensure it uses the updated configuration
-        sudo systemctl restart apache2
-        sudo systemctl status apache2 --no-pager
+        # Stop any existing Apache processes and start fresh
+        echo "Starting Apache service..."
+        sudo systemctl stop apache2 2>/dev/null || true
+        sudo systemctl start apache2
+        
+        # Check Apache status
+        echo "Apache status:"
+        sudo systemctl status apache2 --no-pager -l
+        
+        # Test if Apache is serving content
+        echo "Testing Apache response..."
+        curl -I http://localhost/ 2>/dev/null || echo "Apache not responding on localhost"
         
         # Wait for server to be ready - test with actual server port (80)
         echo "Waiting for Apache to be ready..."
@@ -62,12 +82,14 @@ jobs:
       env:
         TILE_SERVER_URL: http://localhost
       run: |
+        echo "Testing server connectivity with URL: $TILE_SERVER_URL"
         python3 tests/ping_test.py
         
     - name: Run full test suite
       env:
         TILE_SERVER_URL: http://localhost
       run: |
+        echo "Running full test suite with server URL: $TILE_SERVER_URL"
         python3 -m pytest tests/ -v -s
         
     - name: Upload test results
