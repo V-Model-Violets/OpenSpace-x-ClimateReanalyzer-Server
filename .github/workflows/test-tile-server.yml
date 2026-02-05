@@ -67,36 +67,30 @@ jobs:
           echo "Listening sockets:"
           sudo ss -ltnp | grep -E 'apache2|httpd' || true
 
-          # ---- Detect port ----
-          DETECTED_PORT="$(sudo apachectl -S 2>/dev/null | grep -oE '\*:[0-9]+' | head -n1 | cut -d: -f2 || true)"
+          echo "Testing Apache response on port 80..."
+          curl --connect-timeout 10 --max-time 15 -I http://localhost/ || true
 
-          if [ -z "${DETECTED_PORT}" ]; then
-            DETECTED_PORT="$(sudo ss -ltnp 2>/dev/null \
-              | awk '/LISTEN/ && ($0 ~ /apache2|httpd/) {print $4}' \
-              | head -n1 \
-              | awk -F: '{print $NF}' || true)"
-          fi
-
-          if [ -z "${DETECTED_PORT}" ]; then
-            DETECTED_PORT="80"
-          fi
-
-          TILE_SERVER_URL="http://localhost:${DETECTED_PORT}"
-          echo "Detected Apache port: ${DETECTED_PORT}"
-          echo "Using TILE_SERVER_URL=${TILE_SERVER_URL}"
-
-          # Export for later steps
+          # Set server URL to use port 80 consistently  
+          TILE_SERVER_URL="http://localhost"
           echo "TILE_SERVER_URL=${TILE_SERVER_URL}" >> "$GITHUB_ENV"
+          echo "Using server URL: ${TILE_SERVER_URL}"
 
-          echo "Quick probe of root:"
-          curl -I "${TILE_SERVER_URL}/" || true
+          echo "Testing tiles endpoint with short timeout..."
+          # Use much shorter timeouts to prevent hanging
+          if curl --connect-timeout 5 --max-time 10 -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; then
+            echo "Tile endpoint is responding immediately!"
+          else
+            echo "Tile endpoint not ready, waiting up to 30 seconds..."
+            timeout 30 bash -c '
+              while ! curl --connect-timeout 3 --max-time 5 -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; do 
+                echo "Still waiting for tiles..."
+                sleep 3
+              done
+            ' && echo "Tile endpoint is now responding!" || echo "WARNING: Tile endpoint still not ready - continuing with tests"
+          fi
 
-          echo "Waiting for tiles endpoint on detected port..."
-          timeout 90 bash -c "until curl -fsS '${TILE_SERVER_URL}/tiles/Tif/Gebco/tile/0/0/0' >/dev/null 2>&1; do echo 'Waiting for tiles...'; sleep 2; done"
-          echo "Tile endpoint is responding!"
-
-          echo "Apache error log (last 200 lines):"
-          sudo tail -200 /var/log/apache2/error.log || true
+          echo "Apache error log (last 20 lines):"
+          sudo tail -20 /var/log/apache2/error.log || true
 
       - name: Test endpoint discovery (no server required)
         run: |
@@ -104,11 +98,15 @@ jobs:
           python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoint_configuration_validity -v
 
       - name: Test server connectivity
+        env:
+          TILE_SERVER_URL: ${{ env.TILE_SERVER_URL }}
         run: |
           echo "Testing server connectivity with URL: $TILE_SERVER_URL"
           python3 tests/ping_test.py
 
       - name: Run full test suite
+        env:
+          TILE_SERVER_URL: ${{ env.TILE_SERVER_URL }}
         run: |
           echo "Running full test suite with server URL: $TILE_SERVER_URL"
           python3 -m pytest tests/ -v -s
