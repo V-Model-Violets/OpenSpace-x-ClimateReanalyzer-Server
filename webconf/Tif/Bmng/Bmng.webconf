@@ -1,6 +1,6 @@
 RegExp .*/tile/.*
 Size 21600 10800 1 7
 PageSize 512 512 1 7
-DataFile /workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/Tif/Bmng/bmng.ppg
-IndexFile /workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/Tif/Bmng/bmng.idx
+DataFile /workspaces/OpenSpace-x-ClimateReanalyzer-Server/tiles/Tif/Bmng/bmng.ppg
+IndexFile /workspaces/OpenSpace-x-ClimateReanalyzer-Server/tiles/Tif/Bmng/bmng.idx
 SkippedLevels 0

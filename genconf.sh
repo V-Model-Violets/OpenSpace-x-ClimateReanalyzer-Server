@@ -7,12 +7,15 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # --- Config -------------------------------------------------------------------
-# Root data folder where you keep MRF triplets (…/{rel_dir}/{basename}/ files)
-DATA_FOLDER="${DATA_FOLDER:-$HOME/tiles}"
-
-# Resolve script path and webconf root
+# Resolve script path and project root
 SCRIPT="$(realpath "$0" 2>/dev/null || readlink -f "$0")"
 SCRIPTPATH="$(dirname "$SCRIPT")"
+
+# Root data folder where you keep MRF triplets (…/{rel_dir}/{basename}/ files)
+# Default to ./tiles relative to the script location
+DATA_FOLDER="${DATA_FOLDER:-$SCRIPTPATH/tiles}"
+
+# Resolve webconf root and output config relative to script path
 WEBCONF_ROOT="$SCRIPTPATH/webconf"
 OUT_CONF="$SCRIPTPATH/ahtse.conf"
 

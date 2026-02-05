@@ -1,0 +1,10 @@
+# For Ubuntu/Debian systems, install with:
+# sudo apt install python3-requests python3-pytest python3-pip
+
+# If using pip in a virtual environment:
+requests>=2.25.1
+pytest>=6.2.0
+configparser>=5.0.0
+
+# Optional (for HTML reports):
+# pytest-html>=3.0.0

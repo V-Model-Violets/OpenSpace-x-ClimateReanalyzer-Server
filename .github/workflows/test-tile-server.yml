@@ -1,0 +1,75 @@
+name: Test Tile Server
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-endpoints:
+    runs-on: ubuntu-latest
+    
+    services:
+      # If using Docker for AHTSE server
+      ahtse-server:
+        image: your-tile-server-image  # Replace with actual image
+        ports:
+          - 62134:80
+        options: --health-cmd="curl -f http://localhost/health || exit 1" --health-interval=30s --health-timeout=10s --health-retries=3
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-requests python3-pytest gdal-bin
+        
+    - name: Install AHTSE dependencies (if building locally)
+      run: |
+        sudo apt-get install -y apache2 apache2-dev build-essential cmake
+        # Add other dependencies as needed
+        
+    - name: Build and start tile server
+      run: |
+        # Configure and start your AHTSE server
+        # This is an example - adapt to your setup
+        ./setup-ahtse.sh
+        ./genconf.sh
+        sudo systemctl start apache2
+        
+        # Wait for server to be ready - test with a basic tile request
+        timeout 60 bash -c 'until curl -f http://localhost:62134/tiles/Tif/Gebco/tile/0/0/0 || curl -f http://localhost:62134/; do sleep 2; done'
+        
+    - name: Test endpoint discovery (no server required)
+      run: |
+        python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoints_discovered -v
+        python3 -m pytest tests/test_endpoints.py::TestEndpointAvailability::test_endpoint_configuration_validity -v
+        
+    - name: Test server connectivity
+      env:
+        TILE_SERVER_PORT: 62134
+      run: |
+        python3 tests/ping_test.py
+        
+    - name: Run full test suite
+      env:
+        TILE_SERVER_PORT: 62134
+      run: |
+        python3 -m pytest tests/ -v -s
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results
+        path: |
+          tests/tile_server_ping_report_*.json
+          .pytest_cache/

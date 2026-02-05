@@ -334,21 +334,25 @@ sudo apachectl restart
 # 6) Site setup
 # -----------------------------
 echo "[8/8] Creating OpenSpace site..."
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 sudo mkdir -p /var/www/openspace
 sudo chown -R www-data:www-data /var/www/openspace
 
-sudo tee /etc/apache2/sites-available/100-ahtse.conf >/dev/null <<'EOF'
+sudo tee /etc/apache2/sites-available/100-ahtse.conf >/dev/null <<EOF
 # Expose your data root at /tiles/
-Alias /tiles/ "/workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/"
+Alias /tiles/ "${SCRIPT_DIR}/tiles/"
 
-<Directory "/workspaces/OpenSpace-x-ClimateReanalyzer-Server/data/">
+<Directory "${SCRIPT_DIR}/tiles/">
     Options -Indexes -FollowSymLinks
     AllowOverride None
     Require all granted
 </Directory>
 
 # Pull in the blocks your genconf created (MRF_RegExp + MRF_ConfigurationFile)
-Include "/workspaces/OpenSpace-x-ClimateReanalyzer-Server/ahtse.conf"
+Include "${SCRIPT_DIR}/ahtse.conf"
 EOF
 
 sudo ln -sf /etc/apache2/sites-available/100-ahtse.conf /etc/apache2/sites-enabled/100-ahtse.conf
