@@ -10,13 +10,8 @@ jobs:
   test-endpoints:
     runs-on: ubuntu-latest
     
-    services:
-      # If using Docker for AHTSE server
-      ahtse-server:
-        image: your-tile-server-image  # Replace with actual image
-        ports:
-          - 62134:80
-        options: --health-cmd="curl -f http://localhost/health || exit 1" --health-interval=30s --health-timeout=10s --health-retries=3
+    # Note: Using local build instead of Docker service
+    # since we build AHTSE from source with setup-ahtse.sh
     
     steps:
     - name: Checkout repository
