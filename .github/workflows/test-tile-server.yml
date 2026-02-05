@@ -22,7 +22,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-requests python3-pytest gdal-bin curl
+          sudo apt-get install -y python3-requests gdal-bin curl
+
+      - name: Install Python dependencies
+        run: |
+          pip install pytest requests
 
       - name: Install AHTSE dependencies
         run: |
@@ -78,30 +82,12 @@ jobs:
           echo "Listening sockets:"
           sudo ss -ltnp | grep -E 'apache2|httpd' || true
 
-          echo "Testing Apache response on port 80..."
-          curl --connect-timeout 10 --max-time 15 -I http://localhost/ || true
-
-          # Set server URL to use port 80 consistently  
+          # Set server URL for tests
           TILE_SERVER_URL="http://localhost"
           echo "TILE_SERVER_URL=${TILE_SERVER_URL}" >> "$GITHUB_ENV"
           echo "Using server URL: ${TILE_SERVER_URL}"
 
-          echo "Testing tiles endpoint with short timeout..."
-          # Use much shorter timeouts to prevent hanging
-          if curl --connect-timeout 5 --max-time 10 -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; then
-            echo "Tile endpoint is responding immediately!"
-          else
-            echo "Tile endpoint not ready, waiting up to 30 seconds..."
-            timeout 30 bash -c '
-              while ! curl --connect-timeout 3 --max-time 5 -fsS http://localhost/tiles/Tif/Gebco/tile/0/0/0 >/dev/null 2>&1; do 
-                echo "Still waiting for tiles..."
-                sleep 3
-              done
-            ' && echo "Tile endpoint is now responding!" || echo "WARNING: Tile endpoint still not ready - continuing with tests"
-          fi
-
-          echo "Apache error log (last 20 lines):"
-          sudo tail -20 /var/log/apache2/error.log || true
+          echo "Apache setup complete - skipping curl tests, proceeding to test suite"
 
       - name: Test endpoint discovery (no server required)
         run: |
