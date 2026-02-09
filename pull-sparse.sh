@@ -14,3 +14,4 @@ git pull --ff-only
 
 chmod +x setup-ahtse.sh
 chmod +x genconf.sh
+chmod +x pull-sparse.sh

@@ -23,7 +23,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
-.python-history
+.python_history
 build/
 develop-eggs/
 dist/
@@ -171,4 +171,5 @@ Pipfile.lock
 .cache/
 .profile
 .viminfo
+.lesshst
 capstone_web/
