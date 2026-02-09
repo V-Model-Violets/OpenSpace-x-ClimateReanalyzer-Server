@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
+#Test
 echo "AHTSE Server Setup"
 
 HOME_DIR="${HOME}"
