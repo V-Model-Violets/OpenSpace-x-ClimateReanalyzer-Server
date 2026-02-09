@@ -1,366 +1,205 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== AHTSE Server Setup (Noble-friendly) ==="
-export DEBIAN_FRONTEND=noninteractive
+echo "AHTSE Server Setup"
 
-# -----------------------------
-# 0) Packages
-# -----------------------------
-echo "[1/8] Installing dependencies..."
-sudo apt-get update -y
-sudo apt-get install -y \
-  apache2 apache2-dev \
-  gdal-bin libgdal-dev \
-  build-essential cmake pkg-config \
-  libapr1-dev libaprutil1-dev \
-  libjpeg-dev libpng-dev zlib1g-dev \
-  libcurl4-openssl-dev \
-  sqlite3 libsqlite3-dev \
-  git libpcre2-dev
+HOME_DIR="${HOME}"
+WMS_DIR="${HOME_DIR}/wms_modules"
+MOD_DIR="${HOME_DIR}/modules"
+LIB_DIR="${HOME_DIR}/lib"
+INC_DIR="${HOME_DIR}/include"
 
-# Set a global ServerName to avoid AH00558 warning
-echo "[1a/8] Setting global ServerName to localhost..."
-echo "ServerName localhost" | sudo tee /etc/apache2/conf-available/servername.conf >/dev/null
-sudo a2enconf servername >/dev/null
-sudo apachectl restart || true
+APACHE_MODS_AVAIL="/etc/apache2/mods-available"
+APACHE_MODS_EN="/etc/apache2/mods-enabled"
 
-# -----------------------------
-# 1) Discover build paths
-# -----------------------------
-echo "[2/8] Discovering Apache/APR include paths..."
-APXS_BIN=${APXS_BIN:-apxs}
-APR_INC="$(apr-1-config --includedir 2>/dev/null || echo /usr/include/apr-1)"
-AP_INC="$($APXS_BIN -q includedir 2>/dev/null || echo /usr/include/apache2)"
-AP_LIBEXECDIR="$($APXS_BIN -q libexecdir 2>/dev/null || echo /usr/lib/apache2/modules)"
-echo "  APR_INC=${APR_INC}"
-echo "  AP_INC=${AP_INC}"
-echo "  AP_LIBEXECDIR=${AP_LIBEXECDIR}"
+echo "Installing dependencies..."
+sudo apt-get update
+sudo apt-get install -y apache2 apache2-dev gdal-bin libgdal-dev build-essential gcc g++ git cmake pkg-config autoconf automake libtool
 
-# Safety net for compilers that ignore Makefile EXTRA_INCLUDES
-export CPATH="${APR_INC}:${AP_INC}:${CPATH:-}"
-export CPLUS_INCLUDE_PATH="${APR_INC}:${AP_INC}:${CPLUS_INCLUDE_PATH:-}"
+echo "Creating directories..."
+mkdir -p "${WMS_DIR}" "${MOD_DIR}" "${LIB_DIR}" "${INC_DIR}"
 
-# -----------------------------
-# 2) Create dirs & ld.so config
-# -----------------------------
-echo "[3/8] Creating build/install directories..."
-for dir in "$HOME/wms_modules" "$HOME/modules" "$HOME/lib" "$HOME/include"; do
-  mkdir -p "$dir"
-done
-
-echo "[4/8] Registering \$HOME/lib for dynamic linker..."
-echo "$HOME/lib" | sudo tee /etc/ld.so.conf.d/ahtse.conf >/dev/null
+echo "Configuring dynamic linker to find user libraries..."
+echo "${LIB_DIR}" | sudo tee /etc/ld.so.conf.d/capstone-ahtse.conf >/dev/null
 sudo ldconfig
 
-# -----------------------------
-# 3) Clone repos
-# -----------------------------
-echo "[5/8] Cloning repositories..."
-cd "$HOME/wms_modules"
+echo "Cloning required dependencies..."
+cd "${WMS_DIR}"
 for repo in libahtse AHTSE libicd mod_mrf mod_receive mod_sfim mod_reproject mod_convert; do
-  if [ -d "$repo/.git" ]; then
-    echo "  - $repo already cloned"
+  if [ -d "${repo}" ]; then
+    echo "Repository ${repo} already exists. Skipping..."
   else
-    git clone --depth=1 "https://github.com/lucianpls/$repo.git"
+    git clone "https://github.com/lucianpls/${repo}.git"
   fi
 done
 
-# Optional: sanitize upstream hardcoded APR include paths
-echo "[5a/8] Normalizing any hardcoded APR include paths in Makefiles (if present)..."
-find "$HOME/wms_modules" -type f -name 'Makefile*' -print0 \
-  | xargs -0 sed -i 's#/usr/include/apr-1\.0#$(APR_INC)#g' || true
-
-# -----------------------------
-# Helpers
-# -----------------------------
-make_lcl_common() {
-  # Writes a Makefile.lcl in CWD that pulls include dirs dynamically.
-  # Extra user-provided -I paths can be appended by setting EXTRA_DEPS_INC.
-  cat > Makefile.lcl <<EOF
-PREFIX ?= \$(HOME)
-APXS ?= apxs
-
-APR_INC    = \$(shell apr-1-config --includedir 2>/dev/null || echo /usr/include/apr-1)
-AP_INC     = \$(shell \$(APXS) -q includedir 2>/dev/null)
-EXP_INCLUDEDIR = \$(PREFIX)/include
-LIBEXECDIR    = \$(shell \$(APXS) -q libexecdir 2>/dev/null)
-
-EXTRA_INCLUDES = -I\$(AP_INC) -I\$(APR_INC) -I\$(HOME)/include ${EXTRA_DEPS_INC:-}
-EOF
-}
-
-enable_mod() {
-  local name="$1"
-  if [ -f "/etc/apache2/mods-available/${name}.load" ]; then
-    sudo ln -sf "/etc/apache2/mods-available/${name}.load" "/etc/apache2/mods-enabled/${name}.load"
+ensure_lcl() {
+  local d="$1"
+  if [ -f "${d}/Makefile.lcl.example" ] && [ ! -f "${d}/Makefile.lcl" ]; then
+    cp "${d}/Makefile.lcl.example" "${d}/Makefile.lcl"
   fi
 }
 
-# -----------------------------
-# 4) Build (ORDER MATTERS)
-#    mod_receive -> libicd -> libahtse -> others
-# -----------------------------
+build_make_repo() {
+  local name="$1"
+  local dir="$2"
+  echo "Building ${name} (make) in ${dir}..."
+  cd "${dir}"
+  ensure_lcl "${dir}"
+  make
+  make install
+}
 
-echo "[6/8] Building mod_receive (headers needed by libahtse)..."
-cd "$HOME/wms_modules/mod_receive/src"
-EXTRA_DEPS_INC=""
-if [ -f Makefile.lcl.example ]; then
-  cp -f Makefile.lcl.example Makefile.lcl
-else
-  make_lcl_common
-fi
-make -j"$(nproc)"
-make install
-
-# Expose receive headers to dependents (libahtse expects receive_context.h)
-if [ -f "$HOME/wms_modules/mod_receive/src/receive_context.h" ]; then
-  install -Dm644 "$HOME/wms_modules/mod_receive/src/receive_context.h" "$HOME/include/receive_context.h"
-fi
-
-echo "[6a/8] Building libicd..."
-cd "$HOME/wms_modules/libicd/src"
-EXTRA_DEPS_INC=""
-if [ -f Makefile.lcl.example ]; then
-  cp -f Makefile.lcl.example Makefile.lcl
-else
-  make_lcl_common
-fi
-if make -n >/dev/null 2>&1; then
+build_cmake_repo() {
+  local name="$1"
+  local repo_dir="$2"
+  echo "Building ${name} (cmake) in ${repo_dir}..."
+  cd "${repo_dir}"
+  mkdir -p build
+  cd build
+  cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${HOME_DIR}" ..
   make -j"$(nproc)"
   make install
-else
-  # Try CMake layout if Makefile not present
-  cd "$HOME/wms_modules/libicd"
-  if [ -f CMakeLists.txt ]; then
-    cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME" -DCMAKE_BUILD_TYPE=Release
-    cmake --build build -j"$(nproc)"
-    cmake --install build
-  else
-    echo "ERROR: libicd build files not found."
+}
+
+build_repo_smart() {
+  local name="$1"
+  local repo_dir="${WMS_DIR}/${name}"
+
+  echo "Building ${name}..."
+  if [ ! -d "${repo_dir}" ]; then
+    echo "ERROR: Repo directory not found: ${repo_dir}" >&2
     exit 1
   fi
-fi
 
-# Flatten libicd headers into $HOME/include if they landed in a subdir
-mkdir -p "$HOME/include"
-if [ ! -f "$HOME/include/icd_codecs.h" ] && compgen -G "$HOME/include/**/icd_codecs.h" > /dev/null; then
-  first_icd="$(compgen -G "$HOME/include/**/icd_codecs.h" | head -n1)"
-  ln -sf "$(dirname "$first_icd")"/* "$HOME/include/" || true
-fi
+  if [ -f "${repo_dir}/src/Makefile" ] || [ -f "${repo_dir}/src/makefile" ] || [ -f "${repo_dir}/src/Makefile.lcl.example" ]; then
+    build_make_repo "${name}" "${repo_dir}/src"
+    return
+  fi
 
-echo "[6b/8] Building libahtse (needs mod_receive + libicd headers)..."
-cd "$HOME/wms_modules/libahtse/src"
-# Add explicit deps includes for libahtse
-EXTRA_DEPS_INC="-I../../libicd/src -I../../mod_receive/src"
-if [ -f Makefile.lcl.example ]; then
-  cp -f Makefile.lcl.example Makefile.lcl
-  # ensure EXTRA_INCLUDES present by appending our includes to the end
-  cat >> Makefile.lcl <<EOF
+  if [ -f "${repo_dir}/Makefile" ] || [ -f "${repo_dir}/makefile" ] || [ -f "${repo_dir}/Makefile.lcl.example" ]; then
+    build_make_repo "${name}" "${repo_dir}"
+    return
+  fi
 
-# Inject required include paths for dependencies
-APR_INC    = \$(shell apr-1-config --includedir 2>/dev/null || echo /usr/include/apr-1)
-AP_INC     = \$(shell \$(APXS) -q includedir 2>/dev/null)
-EXTRA_INCLUDES += -I\$(AP_INC) -I\$(APR_INC) -I\$(HOME)/include ${EXTRA_DEPS_INC}
-EOF
-else
-  make_lcl_common
-fi
+  if [ -f "${repo_dir}/CMakeLists.txt" ]; then
+    build_cmake_repo "${name}" "${repo_dir}"
+    return
+  fi
 
-export CPLUS_INCLUDE_PATH="$HOME/include:${CPLUS_INCLUDE_PATH:-}"
-make clean || true
-make -j"$(nproc)"
-make install
+  echo "ERROR: No recognized build files for ${name} in ${repo_dir}" >&2
+  (ls -la "${repo_dir}" || true) >&2
+  exit 1
+}
 
-echo "[6c/8] Building mod_mrf..."
-cd "$HOME/wms_modules/mod_mrf/src"
-# For mod_mrf we always write a Makefile.lcl with explicit deps:
-cat > Makefile.lcl <<EOF
+# Build order matters
+build_repo_smart "mod_receive"
+build_repo_smart "libicd"
+build_repo_smart "libahtse"
+
+# mod_mrf: custom Makefile.lcl
+echo "Building mod_mrf (custom Makefile.lcl)..."
+MRF_DIR="${WMS_DIR}/mod_mrf/src"
+cd "${MRF_DIR}"
+cat << 'MRF_MAKE' > Makefile.lcl
 APXS = apxs
-PREFIX ?= \$(HOME)
-APR_INC    = \$(shell apr-1-config --includedir 2>/dev/null || echo /usr/include/apr-1)
-includedir = \$(shell \$(APXS) -q includedir 2>/dev/null)
-EXTRA_INCLUDES = -I\$(includedir) -I\$(APR_INC) -I../../libahtse/src -I../../libicd/src -I../../mod_receive/src -I\$(HOME)/include
-LIBTOOL = \$(shell \$(APXS) -q LIBTOOL 2>/dev/null)
-LIBEXECDIR = \$(shell \$(APXS) -q libexecdir 2>/dev/null)
-EXP_INCLUDEDIR = \$(PREFIX)/include
+PREFIX ?= $(HOME)
+includedir = $(shell $(APXS) -q includedir 2>/dev/null)
+EXTRA_INCLUDES = $(shell $(APXS) -q EXTRA_INCLUDES 2>/dev/null)
+EXTRA_INCLUDES += -I../../libahtse/src
+EXTRA_INCLUDES += -I../../libicd/src
+EXTRA_INCLUDES += -I../../mod_receive/src
+LIBTOOL = $(shell $(APXS) -q LIBTOOL 2>/dev/null)
+LIBEXECDIR = $(shell $(APXS) -q libexecdir 2>/dev/null)
+EXP_INCLUDEDIR = $(PREFIX)/include
 CP = cp
-DEST = \$(PREFIX)/modules
-EOF
-make clean || true
-make -j"$(nproc)"
+DEST = $(PREFIX)/modules
+MRF_MAKE
+make
 make install
 
-echo "[6d/8] Building mod_convert..."
-cd "$HOME/wms_modules/mod_convert/src"
-EXTRA_DEPS_INC="-I../../libahtse/src -I../../libicd/src -I../../mod_receive/src"
-if [ -f Makefile.lcl.example ]; then
-  cp -f Makefile.lcl.example Makefile.lcl
-  cat >> Makefile.lcl <<EOF
+build_repo_smart "mod_convert"
+build_repo_smart "mod_reproject"
+build_repo_smart "mod_sfim"
 
-APR_INC    = \$(shell apr-1-config --includedir 2>/dev/null || echo /usr/include/apr-1)
-AP_INC     = \$(shell \$(APXS) -q includedir 2>/dev/null)
-EXTRA_INCLUDES += -I\$(AP_INC) -I\$(APR_INC) -I\$(HOME)/include ${EXTRA_DEPS_INC}
-EOF
-else
-  make_lcl_common
-fi
-make clean || true
-make -j"$(nproc)"
-make install
-
-echo "[6e/8] Building mod_reproject/mod_retile..."
-cd "$HOME/wms_modules/mod_reproject/src"
-EXTRA_DEPS_INC="-I../../libahtse/src -I../../libicd/src -I../../mod_receive/src"
-if [ -f Makefile.lcl.example ]; then
-  cp -f Makefile.lcl.example Makefile.lcl
-  cat >> Makefile.lcl <<EOF
-
-APR_INC    = \$(shell apr-1-config --includedir 2>/dev/null || echo /usr/include/apr-1)
-AP_INC     = \$(shell \$(APXS) -q includedir 2>/dev/null)
-EXTRA_INCLUDES += -I\$(AP_INC) -I\$(APR_INC) -I\$(HOME)/include ${EXTRA_DEPS_INC}
-EOF
-else
-  make_lcl_common
-fi
-make clean || true
-make -j"$(nproc)"
-make install
-
-echo "[6f/8] Building mod_sfim..."
-cd "$HOME/wms_modules/mod_sfim"
-
-# Clean out any previous broken sfim.load to avoid blocking configtest
-sudo rm -f /etc/apache2/mods-enabled/sfim.load /etc/apache2/mods-available/sfim.load || true
-
-SFIM_SO_PATH=""
-if [ -f src/Makefile ] || [ -f Makefile ]; then
-  make -j"$(nproc)" || true
-  sudo make install || true
-  # If 'make install' put it in the Apache modules dir, remember that path
-  if [ -f "$AP_LIBEXECDIR/mod_sfim.so" ]; then
-    SFIM_SO_PATH="$AP_LIBEXECDIR/mod_sfim.so"
-  fi
-else
-  # Typical build is via apxs; try both compile and install
-  apxs -c mod_sfim.c || true
-  mkdir -p "$HOME/modules"
-  if [ -f ".libs/mod_sfim.so" ]; then
-    cp -f .libs/mod_sfim.so "$HOME/modules/"
-    SFIM_SO_PATH="$HOME/modules/mod_sfim.so"
-  fi
-  # Also install to Apache's module dir (optional)
-  apxs -i -n sfim mod_sfim.la || true
-  # If apxs installed it, record that path as fallback
-  if [ -z "$SFIM_SO_PATH" ] && [ -f "$AP_LIBEXECDIR/mod_sfim.so" ]; then
-    SFIM_SO_PATH="$AP_LIBEXECDIR/mod_sfim.so"
-  fi
-fi
-
-# Final check: do we have a built .so anywhere?
-if [ -z "$SFIM_SO_PATH" ]; then
-  echo "WARN: mod_sfim.so was not produced; skipping Apache load for sfim."
-else
-  echo "mod_sfim.so found at: $SFIM_SO_PATH"
-fi
-
+echo "Refreshing dynamic linker cache..."
 sudo ldconfig
 
-# -----------------------------
-# 5) Apache module load files
-# -----------------------------
-echo "[7/8] Installing Apache module .load files..."
-sudo mkdir -p /etc/apache2/mods-available /etc/apache2/mods-enabled
-
-# mrf
-if [ -f "$HOME/modules/mod_mrf.so" ]; then
-  sudo tee /etc/apache2/mods-available/mrf.load >/dev/null <<EOF
-LoadFile $HOME/modules/libahtse.so
-LoadModule mrf_module $HOME/modules/mod_mrf.so
-EOF
-  enable_mod mrf
+echo "Locating libicd.so..."
+LIBICD_PATH="${LIB_DIR}/libicd.so"
+if [ ! -f "${LIBICD_PATH}" ]; then
+  echo "ERROR: Expected ${LIBICD_PATH} but it does not exist." >&2
+  echo "Find it with: find '${HOME_DIR}' -maxdepth 4 -name 'libicd.so*' -print" >&2
+  exit 1
 fi
+echo "-> libicd found at: ${LIBICD_PATH}"
 
-# convert
-if [ -f "$HOME/modules/mod_convert.so" ]; then
-  sudo tee /etc/apache2/mods-available/convert.load >/dev/null <<EOF
-LoadFile $HOME/modules/libahtse.so
-LoadModule convert_module $HOME/modules/mod_convert.so
-EOF
-  enable_mod convert
-fi
-
-# receive (guarded)
-if [ -f "$HOME/modules/mod_receive.so" ]; then
-  sudo tee /etc/apache2/mods-available/receive.load >/dev/null <<EOF
-LoadModule receive_module $HOME/modules/mod_receive.so
-EOF
-  enable_mod receive
-fi
-
-# retile (guarded)
-if [ -f "$HOME/modules/mod_retile.so" ]; then
-  sudo tee /etc/apache2/mods-available/retile.load >/dev/null <<EOF
-LoadModule retile_module $HOME/modules/mod_retile.so
-EOF
-  enable_mod retile
-fi
-
-# sfim (guarded & auto-detected path)
-if [ -z "${SFIM_SO_PATH:-}" ]; then
-  if [ -f "$HOME/modules/mod_sfim.so" ]; then
-    SFIM_SO_PATH="$HOME/modules/mod_sfim.so"
-  elif [ -f "$AP_LIBEXECDIR/mod_sfim.so" ]; then
-    SFIM_SO_PATH="$AP_LIBEXECDIR/mod_sfim.so"
-  fi
-fi
-if [ -n "${SFIM_SO_PATH:-}" ] && [ -f "$SFIM_SO_PATH" ]; then
-  sudo tee /etc/apache2/mods-available/sfim.load >/dev/null <<EOF
-LoadModule sfim_module $SFIM_SO_PATH
-EOF
-  enable_mod sfim
+echo "Verifying libahtse dependency resolution..."
+if [ -f "${MOD_DIR}/libahtse.so" ]; then
+  ldd "${MOD_DIR}/libahtse.so" | grep -E 'not found|libicd' || true
 else
-  echo "INFO: sfim module not built; not creating sfim.load."
+  echo "ERROR: ${MOD_DIR}/libahtse.so not found" >&2
+  exit 1
 fi
 
-echo "[7a/8] Checking Apache config..."
-echo "Built modules present under \$HOME/modules (if any):"
-ls -l "$HOME/modules" || true
+echo "Installing Apache module load files..."
+install_mod_load() {
+  local name="$1"
+  local contents="$2"
+  local avail="${APACHE_MODS_AVAIL}/${name}.load"
+  local enabled="${APACHE_MODS_EN}/${name}.load"
 
-sudo apachectl configtest || (echo "Apache config test failed" && exit 1)
-sudo apachectl restart
+  echo "${contents}" | sudo tee "${avail}" >/dev/null
+  if [ ! -e "${enabled}" ]; then
+    sudo ln -s "${avail}" "${enabled}"
+  fi
+}
 
-# -----------------------------
-# 6) Site setup
-# -----------------------------
-echo "[8/8] Creating OpenSpace site..."
+# Load dependency first
+install_mod_load "mrf" "LoadFile ${LIBICD_PATH}
+LoadFile ${MOD_DIR}/libahtse.so
+LoadModule mrf_module ${MOD_DIR}/mod_mrf.so"
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install_mod_load "convert" "LoadFile ${LIBICD_PATH}
+LoadFile ${MOD_DIR}/libahtse.so
+LoadModule convert_module ${MOD_DIR}/mod_convert.so"
 
-sudo mkdir -p /var/www/openspace
-sudo chown -R www-data:www-data /var/www/openspace
+install_mod_load "receive" "LoadModule receive_module ${MOD_DIR}/mod_receive.so"
+install_mod_load "retile"  "LoadModule retile_module ${MOD_DIR}/mod_retile.so"
+install_mod_load "sfim"    "LoadModule sfim_module ${MOD_DIR}/mod_sfim.so"
 
-sudo tee /etc/apache2/sites-available/100-ahtse.conf >/dev/null <<EOF
-# Expose your data root at /tiles/
-Alias /tiles/ "${SCRIPT_DIR}/tiles/"
+echo "Creating OpenSpace web directory..."
+sudo mkdir -p /var/www/capstone
+sudo chown -R www-data:www-data /var/www/capstone
 
-<Directory "${SCRIPT_DIR}/tiles/">
-    Options -Indexes -FollowSymLinks
-    AllowOverride None
-    Require all granted
-</Directory>
+echo "Installing OpenSpace virtual host..."
+sudo tee /etc/apache2/sites-available/001-capstone.conf >/dev/null << 'APACHE'
+<VirtualHost *:80>
+    ServerName capstone.maps
+    DocumentRoot /var/www/capstone
 
-# Pull in the blocks your genconf created (MRF_RegExp + MRF_ConfigurationFile)
-Include "${SCRIPT_DIR}/ahtse.conf"
-EOF
+    <Directory /var/www/capstone>
+        Options +Indexes
+        Require all granted
+        AllowOverride None
+    </Directory>
 
-sudo ln -sf /etc/apache2/sites-available/100-ahtse.conf /etc/apache2/sites-enabled/100-ahtse.conf
+    ErrorLog ${APACHE_LOG_DIR}/capstone-error.log
+    CustomLog ${APACHE_LOG_DIR}/capstone-access.log combined
+</VirtualHost>
+APACHE
 
-sudo apachectl configtest && sudo service apache2 restart
-echo "=== AHTSE server install complete! ==="
+if [ ! -e /etc/apache2/sites-enabled/001-capstone.conf ]; then
+  sudo ln -s /etc/apache2/sites-available/001-capstone.conf /etc/apache2/sites-enabled/001-capstone.conf
+fi
 
-echo
-echo "Quick checks:"
-echo "  apachectl -M | grep -E 'mrf|convert|receive|retile|sfim'  # should list loaded modules (sfim only if built)"
-echo "  curl -I http://localhost/                              # 200 OK"
+echo "Testing Apache configuration..."
+sudo apache2ctl configtest
+
+echo "Restarting Apache..."
+sudo systemctl restart apache2
+
+echo "Apache status:"
+sudo systemctl status apache2 --no-pager
+
+echo "AHTSE server install complete!"
