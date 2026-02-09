@@ -23,6 +23,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+.python-history
 build/
 develop-eggs/
 dist/
@@ -161,3 +162,13 @@ Pipfile.lock
 *.backup
 *.bak
 *~
+
+# Server Stuff
+.ssh/
+.anaconda/
+.conda/
+.bash*
+.cache/
+.profile
+.viminfo
+capstone_web/
