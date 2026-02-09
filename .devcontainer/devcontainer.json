@@ -8,7 +8,7 @@
   },
 
   // Run setup + genconf once when the container is created
-  "postCreateCommand": "bash setup-ahtse-dev.sh && bash genconf.sh",
+  "postCreateCommand": "bash /devcontainer/setup-ahtse-dev.sh && bash genconf.sh",
 
   // Start Apache on container start (no sudo needed if we use root)
   "postStartCommand": "service apache2 start",
