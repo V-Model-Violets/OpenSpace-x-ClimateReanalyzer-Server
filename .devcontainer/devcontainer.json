@@ -8,9 +8,11 @@
   },
 
   // Run setup + genconf once when the container is created
-  "postCreateCommand": "bash /devcontainer/setup-ahtse-dev.sh && bash genconf.sh",
+    // ...existing code...
+    "postCreateCommand": "apt update && apt install -y python3-pip python3-venv && python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt",
+    // ...existing code...
 
-  // Start Apache on container start (no sudo needed if we use root)
+    // Start Apache on container start (no sudo needed if we use root)
   "postStartCommand": "service apache2 start",
 
   // Forward port 80 from the container to your host
