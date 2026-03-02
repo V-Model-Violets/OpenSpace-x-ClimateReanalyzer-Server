@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd -P)"
+
 echo "=== AHTSE Server Setup (Noble-friendly) ==="
 export DEBIAN_FRONTEND=noninteractive
 
@@ -327,16 +330,15 @@ echo "[7a/8] Checking Apache config..."
 echo "Built modules present under \$HOME/modules (if any):"
 ls -l "$HOME/modules" || true
 
-sudo apachectl configtest || (echo "Apache config test failed" && exit 1)
-sudo apachectl restart
+if ! sudo apachectl configtest; then
+  echo "WARN: Apache config test failed before site setup; continuing to rewrite 100-ahtse.conf."
+fi
+sudo apachectl restart || true
 
 # -----------------------------
 # 6) Site setup
 # -----------------------------
 echo "[8/8] Creating OpenSpace site..."
-
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 sudo mkdir -p /var/www/openspace
 sudo chown -R www-data:www-data /var/www/openspace
