@@ -102,7 +102,9 @@ class TestEndpointAvailability:
                 for failure in failures[:3]:  # Show first 3 failures
                     print(f"    {failure}")
                     
-            # At least one tile should be successful (but skip if server not running)
+            # At least one tile should be successful (but skip if server not running).
+            # str(failures) converts the list to a single string so we can search
+            # all error messages at once without looping through them explicitly.
             if failures and "Connection refused" in str(failures):
                 pytest.skip(f"Server not accessible for endpoint {endpoint_name}")
             
@@ -194,5 +196,5 @@ class TestEndpointPerformance:
 
 
 if __name__ == "__main__":
-    """Run tests directly if script is executed."""
+    # Run tests directly when the script is executed (instead of via pytest discovery).
     pytest.main([__file__, "-v"])

@@ -282,6 +282,8 @@ def detect_server_url(base_url: str = None) -> str:
         if port not in ports_to_try:
             ports_to_try.append(port)
             
+    # Late import: requests is only needed inside this function so the module
+    # remains importable even when running in environments without the package.
     import requests
     
     for port in ports_to_try:

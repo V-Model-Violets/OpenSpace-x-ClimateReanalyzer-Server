@@ -421,7 +421,8 @@ Examples:
     # Initialize test runner
     base_server_url = args.server
     if args.no_auto_detect:
-        # Use exact URL without auto-detection
+        # Bypass the normal __init__ so we can set server_url directly without
+        # triggering the auto-detect HTTP probe that __init__ performs.
         test_runner = TileServerPingTest.__new__(TileServerPingTest)
         test_runner.base_server_url = base_server_url or get_server_url()
         test_runner.server_url = test_runner.base_server_url

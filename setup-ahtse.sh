@@ -1,16 +1,31 @@
 #!/usr/bin/env bash
+# setup-ahtse.sh — One-shot installer for the AHTSE Apache tile server stack.
+#
+# What it does (in order):
+#   1. Installs system dependencies via apt.
+#   2. Creates working directories under $HOME.
+#   3. Registers $HOME/lib with the dynamic linker so shared objects are found.
+#   4. Clones all required AHTSE module repos from GitHub (lucianpls).
+#   5. Builds them in dependency order: mod_receive → libicd → libahtse → mod_mrf
+#                                       → mod_convert → mod_reproject → mod_sfim.
+#   6. Writes Apache .load files and enables each module.
+#   7. Creates a virtual host and restarts Apache.
+#
+# Usage: bash setup-ahtse.sh
+#   Run as a user with sudo privileges on a Ubuntu/Debian system.
 set -euo pipefail
-#Test
+
 echo "AHTSE Server Setup"
 
-HOME_DIR="${HOME}"
-WMS_DIR="${HOME_DIR}/wms_modules"
-MOD_DIR="${HOME_DIR}/modules"
-LIB_DIR="${HOME_DIR}/lib"
-INC_DIR="${HOME_DIR}/include"
+# --- Directory layout -------------------------------------------------------
+HOME_DIR="${HOME}"           # User home used as install prefix
+WMS_DIR="${HOME_DIR}/wms_modules"  # Source checkouts for each AHTSE repo
+MOD_DIR="${HOME_DIR}/modules"      # Compiled .so files
+LIB_DIR="${HOME_DIR}/lib"          # Shared libraries (libicd.so, libahtse.so, …)
+INC_DIR="${HOME_DIR}/include"      # Public headers exposed to dependents
 
-APACHE_MODS_AVAIL="/etc/apache2/mods-available"
-APACHE_MODS_EN="/etc/apache2/mods-enabled"
+APACHE_MODS_AVAIL="/etc/apache2/mods-available"  # Canonical location for *.load files
+APACHE_MODS_EN="/etc/apache2/mods-enabled"       # Symlinked .load files Apache reads
 
 echo "Installing dependencies..."
 sudo apt-get update
@@ -33,6 +48,9 @@ for repo in libahtse AHTSE libicd mod_mrf mod_receive mod_sfim mod_reproject mod
   fi
 done
 
+# ensure_lcl DIR
+# If a Makefile.lcl.example exists but no Makefile.lcl yet, copy the example
+# into place so make can pick up local overrides (include paths, prefixes, etc.).
 ensure_lcl() {
   local d="$1"
   if [ -f "${d}/Makefile.lcl.example" ] && [ ! -f "${d}/Makefile.lcl" ]; then
@@ -40,6 +58,9 @@ ensure_lcl() {
   fi
 }
 
+# build_make_repo NAME DIR
+# Ensures a Makefile.lcl exists, then invokes 'make && make install' in DIR.
+# Outputs are installed relative to the prefix defined in Makefile.lcl (usually $HOME).
 build_make_repo() {
   local name="$1"
   local dir="$2"
@@ -50,6 +71,9 @@ build_make_repo() {
   make install
 }
 
+# build_cmake_repo NAME REPO_DIR
+# Configures and builds a CMake-based project, installing into $HOME_DIR.
+# A 'build/' subdirectory is created inside REPO_DIR for out-of-tree compilation.
 build_cmake_repo() {
   local name="$1"
   local repo_dir="$2"
@@ -62,6 +86,12 @@ build_cmake_repo() {
   make install
 }
 
+# build_repo_smart NAME
+# Auto-selects the appropriate build system for a cloned repo:
+#   1. Prefers Makefile / Makefile.lcl.example inside src/ (AHTSE convention).
+#   2. Falls back to Makefile / Makefile.lcl.example in the repo root.
+#   3. Falls back to CMakeLists.txt in the repo root.
+# Exits with an error if none of these are found.
 build_repo_smart() {
   local name="$1"
   local repo_dir="${WMS_DIR}/${name}"
@@ -72,16 +102,19 @@ build_repo_smart() {
     exit 1
   fi
 
+  # Most AHTSE modules keep their Makefile under src/
   if [ -f "${repo_dir}/src/Makefile" ] || [ -f "${repo_dir}/src/makefile" ] || [ -f "${repo_dir}/src/Makefile.lcl.example" ]; then
     build_make_repo "${name}" "${repo_dir}/src"
     return
   fi
 
+  # Some repos have the Makefile directly in the root
   if [ -f "${repo_dir}/Makefile" ] || [ -f "${repo_dir}/makefile" ] || [ -f "${repo_dir}/Makefile.lcl.example" ]; then
     build_make_repo "${name}" "${repo_dir}"
     return
   fi
 
+  # CMake-based repos (e.g. newer libicd releases)
   if [ -f "${repo_dir}/CMakeLists.txt" ]; then
     build_cmake_repo "${name}" "${repo_dir}"
     return
@@ -92,12 +125,16 @@ build_repo_smart() {
   exit 1
 }
 
-# Build order matters
+# Build order matters: each library must be installed before dependents compile.
+#   mod_receive  — must come first; libahtse needs receive_context.h.
+#   libicd       — image codec library used by libahtse and mod_mrf.
+#   libahtse     — core AHTSE library that all Apache modules link against.
 build_repo_smart "mod_receive"
 build_repo_smart "libicd"
 build_repo_smart "libahtse"
 
-# mod_mrf: custom Makefile.lcl
+# mod_mrf uses a custom Makefile.lcl because it needs explicit -I paths to the
+# three libraries built above that a generic Makefile.lcl.example won't know about.
 echo "Building mod_mrf (custom Makefile.lcl)..."
 MRF_DIR="${WMS_DIR}/mod_mrf/src"
 cd "${MRF_DIR}"
@@ -143,6 +180,11 @@ else
 fi
 
 echo "Installing Apache module load files..."
+# install_mod_load NAME CONTENTS
+# Writes a <name>.load file to mods-available with the given Apache directives,
+# then symlinks it into mods-enabled (idempotent; skips if the symlink exists).
+# NAME   — module name without the .load extension (e.g. "mrf").
+# CONTENTS — multi-line string with LoadFile / LoadModule directives.
 install_mod_load() {
   local name="$1"
   local contents="$2"
