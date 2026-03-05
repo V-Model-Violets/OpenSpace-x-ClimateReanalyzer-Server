@@ -18,8 +18,14 @@ BRANCH="main"
 
 cd "$DEST"
 
+git sparse-checkout init --cone
+git sparse-checkout set setup-ahtse.sh genconf.sh pull-sparse.sh zmap_tiler_v1.sh setup-ahtse_v2.sh
+
 # Ensure we're on the right branch and clean
 git checkout "$BRANCH" >/dev/null 2>&1 || true
+
+# Ignore file permissions
+git config core.fileMode false
 
 # Only fast-forward (won't merge, won't create conflicts)
 git pull --ff-only
@@ -28,3 +34,5 @@ git pull --ff-only
 chmod +x setup-ahtse.sh
 chmod +x genconf.sh
 chmod +x pull-sparse.sh
+chmod +x zmap_tiler_v1.sh
+chmod +x setup-ahtse_v2.sh
